@@ -1,11 +1,17 @@
 """Orchestration: request text in, one reply per job out; and the inbox pass that emails them. Never raises."""
 
+import imaplib
 import logging
 import re
 import shutil
+import smtplib
+import socket
+import ssl
 from pathlib import Path
+from typing import Callable
 
 from . import composer, email_in, email_out
+from .email_in import EmailAuthError
 from .composer import ReplyFacts
 from .config import settings
 from .models import AgentResult, Document, IncomingRequest, Job, MatterInfo
@@ -14,6 +20,12 @@ from .parser import parse_request
 from .scraper import MatterNotFound, UarbScraper
 
 log = logging.getLogger(__name__)
+
+# Network trouble worth retrying later (as opposed to a bad message or a rejected reply).
+CONNECTION_ERRORS = (
+    ConnectionError, TimeoutError, socket.gaierror, ssl.SSLError, imaplib.IMAP4.abort,
+    smtplib.SMTPServerDisconnected, smtplib.SMTPConnectError,
+)
 
 
 def handle_request(text: str, sender_name: str | None = None) -> list[AgentResult]:
@@ -58,7 +70,7 @@ def _run_job(scraper: UarbScraper, job: Job, infos: dict[str, MatterInfo | None]
         downloaded = scraper.download_documents(job.doc_type, attempted, dest, failed=failed) if attempted else []
         zipped = make_zip([d.path for d in downloaded], zip_path) if downloaded else None
         facts = composer.success_facts(info, job.doc_type, attempted, downloaded, failed, zipped, sender_name)
-        return _result(facts, job, zipped.path if zipped else None)
+        return _result(facts, job, zipped.path if zipped else None, dest)
     except MatterNotFound:
         log.info("Matter %s not found", job.matter_number)
         infos[job.matter_number] = None
@@ -70,10 +82,10 @@ def _run_job(scraper: UarbScraper, job: Job, infos: dict[str, MatterInfo | None]
         return _result(composer.error_facts(job, sender_name), job)
 
 
-def _result(facts: ReplyFacts, job: Job | None = None, zip_path: Path | None = None) -> AgentResult:
+def _result(facts: ReplyFacts, job: Job | None = None, zip_path: Path | None = None, files_dir: Path | None = None) -> AgentResult:
     body, composed_by = composer.compose(facts)
     return AgentResult(
-        reply_body=body, zip_path=zip_path, composed_by=composed_by,
+        reply_body=body, zip_path=zip_path, files_dir=files_dir, composed_by=composed_by,
         subject_suffix=composer.subject_suffix(job) if job else None,
     )
 
@@ -87,35 +99,71 @@ def request_text(req: IncomingRequest) -> str:
     return f"Subject: {subject}\n\n{req.body}" if subject else req.body
 
 
-def process_inbox_once(subject_contains: str | None = None) -> int:
-    """Handle every unread request: reply to each job, then mark the email processed. Returns emails handled."""
-    try:
-        requests = email_in.fetch_unread(subject_contains=subject_contains)
-    except Exception:
-        log.exception("Couldn't read the inbox")
-        return 0
+def process_inbox_once(subject_contains: str | None = None, should_stop: Callable[[], bool] = lambda: False) -> int:
+    """Handle every unread request: reply to each job, then mark the email processed. Returns emails handled.
+
+    Raises EmailAuthError and CONNECTION_ERRORS so a caller can back off; everything else is handled per email.
+    Stops between emails once should_stop() is true; the rest stay unread for next time.
+    """
+    requests = email_in.fetch_unread(subject_contains=subject_contains)
+    handled = 0
     for req in requests:
+        if should_stop():
+            log.info("Stopping; %d email(s) left unread for next time", len(requests) - handled)
+            break
         process_request(req)
-    return len(requests)
+        handled += 1
+    return handled
 
 
 def process_request(req: IncomingRequest) -> None:
+    """Reply to one email and mark it processed. A failed request still gets an error reply.
+
+    If no reply could be sent because the network is down, the email stays unread (to retry later) and the
+    connection error is raised; any other send failure still marks it processed: one missed reply beats a loop.
+    """
     log.info("Handling %r from %s", req.subject, req.sender_email)
     try:
+        results = handle_request(request_text(req), req.sender_name)
+    except Exception:
+        log.exception("Request %r failed", req.subject)
+        results = [AgentResult(reply_body=composer.failure_text(req.sender_name), composed_by="template")]
+
+    sent = 0
+    network_error: Exception | None = None
+    for result in results:
         try:
-            results = handle_request(request_text(req), req.sender_name)
+            email_out.send_reply(req, result)
+        except EmailAuthError:
+            raise
+        except CONNECTION_ERRORS as e:
+            log.warning("Couldn't send reply %s: %s", result.subject_suffix or "[clarification]", e)
+            network_error = e
+            continue
         except Exception:
-            log.exception("Request %r failed", req.subject)
-            results = [AgentResult(reply_body=composer.failure_text(req.sender_name), composed_by="template")]
-        for result in results:
-            try:
-                email_out.send_reply(req, result)
-            except Exception:
-                log.exception("Couldn't send reply %s", result.subject_suffix or "[clarification]")
-    finally:
-        # Mark processed even after a failure: one missed reply beats replying in a loop.
-        if req.uid:
-            try:
-                email_in.mark_processed(req.uid)
-            except Exception:
-                log.exception("Couldn't mark %s processed", req.uid)
+            log.exception("Couldn't send reply %s", result.subject_suffix or "[clarification]")
+            continue
+        sent += 1
+        cleanup_result(result)
+
+    if network_error and not sent:
+        raise network_error
+    if req.uid:
+        try:
+            email_in.mark_processed(req.uid)
+        except EmailAuthError:
+            raise
+        except Exception:
+            log.exception("Couldn't mark %s processed", req.uid)
+
+
+def cleanup_result(result: AgentResult) -> None:
+    """Delete a sent reply's ZIP and downloads (and the matter folder once empty)."""
+    if result.zip_path:
+        result.zip_path.unlink(missing_ok=True)
+    if result.files_dir:
+        shutil.rmtree(result.files_dir, ignore_errors=True)
+        try:
+            result.files_dir.parent.rmdir()  # downloads/<matter>/, only if no other doc type is still there
+        except OSError:
+            pass

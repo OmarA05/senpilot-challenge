@@ -1,8 +1,13 @@
 import argparse
 import logging
+import sys
+import threading
 import zipfile
 
-from .agent import handle_request, process_inbox_once
+from .agent import CONNECTION_ERRORS, handle_request, process_inbox_once
+from .config import settings
+from .email_in import EmailAuthError
+from .runner import install_signal_handlers, prune_downloads, run_forever
 
 
 def main() -> None:
@@ -14,7 +19,8 @@ def main() -> None:
     once.add_argument("--name", help="sender's name to greet (default: \"there\")")
     check = sub.add_parser("check", help="process unread emails in the inbox once and reply")
     check.add_argument("--subject-contains", help="only handle unread emails whose subject contains this text")
-    sub.add_parser("run", help="poll the inbox and reply by email")
+    run = sub.add_parser("run", help="poll the inbox and reply by email until stopped (Ctrl+C)")
+    run.add_argument("--interval", type=float, help=f"seconds between inbox checks (default {settings.poll_interval_seconds})")
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -25,10 +31,25 @@ def main() -> None:
     if args.command == "once":
         _print_results(args.text, args.name)
     elif args.command == "check":
-        n = process_inbox_once(args.subject_contains)
+        try:
+            n = process_inbox_once(args.subject_contains)
+        except EmailAuthError as e:
+            sys.exit(str(e))
+        except CONNECTION_ERRORS as e:
+            sys.exit(f"Couldn't reach Gmail: {type(e).__name__}: {e}")
         print(f"Processed {n} email(s).")
     else:
-        print("run: not implemented yet (Chunk 9)")
+        sys.exit(_run(args.interval))
+
+
+def _run(interval: float | None) -> int:
+    stop = threading.Event()
+    install_signal_handlers(stop)
+    prune_downloads()
+    logging.getLogger("uarb_agent").info(
+        "Watching %s every %ss (Ctrl+C to stop)", settings.gmail_address, interval or settings.poll_interval_seconds
+    )
+    return run_forever(stop=stop, interval=interval)
 
 
 def _print_results(text: str, sender_name: str | None = None) -> None:

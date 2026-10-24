@@ -202,3 +202,8 @@ def test_process_request_send_failure_does_not_raise(monkeypatch):
     monkeypatch.setattr(email_in, "mark_processed", lambda uid: marked.append(uid))
     agent.process_request(_req(uid="9"))
     assert marked == ["9"]
+
+
+def test_trash_matching_refuses_empty_filter():
+    with pytest.raises(ValueError):
+        email_in.trash_matching("  ")

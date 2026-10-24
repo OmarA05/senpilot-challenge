@@ -45,12 +45,10 @@ def _find_reply(tag: str, in_reply_to: str) -> EmailMessage | None:
     return None
 
 
-def _delete_tagged(tag: str) -> None:
+def _inbox_count(tag: str) -> int:
     with email_in.imap_connection() as conn:
-        conn.select(ALL_MAIL)
         _, data = conn.uid("SEARCH", None, "SUBJECT", f'"{tag}"')
-        for uid in data[0].split():
-            conn.uid("STORE", uid, "+X-GM-LABELS", "\\Trash")
+        return len(data[0].split())
 
 
 def test_email_round_trip(tmp_path):
@@ -92,4 +90,7 @@ def test_email_round_trip(tmp_path):
         # Our own reply must never be treated as a new request.
         assert email_in.skip_reason(reply) == "agent's own reply"
     finally:
-        _delete_tagged(tag)
+        email_in.trash_matching(tag)
+        # Our reply can land a moment after the request; sweep again once it's had time to arrive.
+        _wait(lambda: email_in.trash_matching(tag) == 0 and _inbox_count(tag) == 0, timeout=30)
+        assert _inbox_count(tag) == 0, "test messages left in INBOX"

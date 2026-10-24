@@ -68,5 +68,6 @@ class MatterInfo(BaseModel):
 class AgentResult(BaseModel):
     reply_body: str
     zip_path: Path | None = None
+    files_dir: Path | None = None  # downloaded files behind zip_path; deleted with it once the reply is sent
     subject_suffix: str | None = None  # e.g. "[M12205 – Other Documents]"; None for clarification replies
     composed_by: str | None = None  # "llm" or "template"

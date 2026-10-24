@@ -16,6 +16,7 @@ from .models import IncomingRequest
 log = logging.getLogger(__name__)
 
 IMAP_HOST = "imap.gmail.com"
+NETWORK_TIMEOUT = 120  # seconds; Gmail logins alone can take ~15s, but a hung socket must not freeze the loop
 PROCESSED_LABEL = "uarb-agent/processed"
 REPLY_HEADER = "X-UARB-Agent-Reply"  # set on every reply we send, so we never answer ourselves
 TEST_HEADER = "X-UARB-Agent-Test"  # set by scripts/send_test_email.py on self-sent test requests
@@ -33,7 +34,7 @@ AUTH_HELP = (
 
 @contextmanager
 def imap_connection() -> Iterator[imaplib.IMAP4_SSL]:
-    conn = imaplib.IMAP4_SSL(IMAP_HOST)
+    conn = imaplib.IMAP4_SSL(IMAP_HOST, timeout=NETWORK_TIMEOUT)
     try:
         try:
             conn.login(settings.gmail_address, settings.gmail_app_password)
@@ -70,7 +71,7 @@ def fetch_unread(limit: int | None = None, subject_contains: str | None = None) 
                 mark_processed(uid.decode(), conn)
                 continue
             requests.append(parse_message(msg, uid.decode()))
-        log.info("Fetched %d unread request(s)", len(requests))
+        log.log(logging.INFO if requests else logging.DEBUG, "Fetched %d unread request(s)", len(requests))
         return requests
 
 
@@ -90,6 +91,31 @@ def mark_processed(uid: str, conn: imaplib.IMAP4_SSL | None = None) -> None:
         conn.uid("STORE", uid, "+X-GM-LABELS", _quote(PROCESSED_LABEL))
     except imaplib.IMAP4.error as e:
         log.debug("Couldn't label %s: %s", uid, e)
+
+
+def trash_matching(subject_contains: str) -> int:
+    """Move every message (any folder) whose subject contains the text to Trash. Returns how many.
+
+    Used to clean up self-test emails; refuses an empty filter so it can never sweep the whole mailbox.
+    """
+    if not subject_contains.strip():
+        raise ValueError("subject_contains must not be empty")
+    with imap_connection() as conn:
+        _, boxes = conn.list()
+        listing = [b.decode() for b in boxes]
+        all_mail = next(_mailbox_name(b) for b in listing if "\\All" in b)
+        trash = next(_mailbox_name(b) for b in listing if "\\Trash" in b)
+        conn.select(all_mail)
+        _, data = conn.uid("SEARCH", None, "SUBJECT", _quote(subject_contains))
+        uids = data[0].split()
+        if uids:
+            conn.uid("MOVE", b",".join(uids).decode(), trash)
+        return len(uids)
+
+
+def _mailbox_name(list_line: str) -> str:
+    # e.g. '(\\HasNoChildren \\Trash) "/" "[Gmail]/Trash"' → '"[Gmail]/Trash"'
+    return list_line.rsplit(' "/" ', 1)[1]
 
 
 # --- parsing ----------------------------------------------------------------

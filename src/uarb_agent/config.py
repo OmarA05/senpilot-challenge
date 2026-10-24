@@ -16,11 +16,14 @@ class Settings(BaseSettings):
 
     uarb_url: str = "https://uarb.novascotia.ca/fmi/webd/UARB15"
     poll_interval_seconds: int = 30
+    max_backoff_seconds: int = 300
     max_documents: int = 10
     max_jobs_per_email: int = 5
     max_attachment_bytes: int = 20 * 1024 * 1024
     headless: bool = True
     download_dir: Path = Path("downloads")
+    cleanup_after_hours: float = 24  # leftover downloads (kept after failed replies) are pruned on startup
+    error_screenshot_days: float = 7
 
 
 settings = Settings()

@@ -4,11 +4,14 @@ The site has no stable element ids, so everything is located by text, CSS class 
 on-screen position. See "Site findings" in PLAN.md for the reasoning behind each step.
 """
 
+import asyncio
 import logging
 import re
 import time
+from contextlib import contextmanager
 from datetime import date, datetime
 from pathlib import Path
+from typing import Iterator
 
 from playwright.sync_api import Browser, Locator, Page, Playwright, sync_playwright
 from playwright.sync_api import Error as PlaywrightError
@@ -65,8 +68,10 @@ class UarbScraper:
         self._current_tab: DocType | None = None
 
     def __enter__(self) -> "UarbScraper":
-        self._pw = sync_playwright().start()
-        self._browser = self._pw.chromium.launch(headless=self.headless)
+        with _driver_in_own_session():
+            self._pw = sync_playwright().start()
+        # The `run` loop handles Ctrl+C itself (finish the current email, then stop), so the browser mustn't.
+        self._browser = self._pw.chromium.launch(headless=self.headless, handle_sigint=False)
         context = self._browser.new_context(accept_downloads=True, viewport={"width": 1400, "height": 1000})
         self.page = context.new_page()
         return self
@@ -321,6 +326,27 @@ class UarbScraper:
             log.info("Saved error screenshot %s", path)
         except PlaywrightError:
             pass
+
+
+@contextmanager
+def _driver_in_own_session() -> Iterator[None]:
+    """Start Playwright's driver process in its own session.
+
+    Otherwise a terminal Ctrl+C reaches the driver (same process group) and kills the browser mid-download,
+    even though the `run` loop wants to finish the current email first. Playwright has no option for this,
+    so the spawn call it uses is wrapped just while the driver starts. The driver still exits when we do:
+    it lives on a pipe from this process.
+    """
+    original = asyncio.create_subprocess_exec
+
+    async def spawn(*args, **kwargs):
+        return await original(*args, start_new_session=True, **kwargs)
+
+    asyncio.create_subprocess_exec = spawn
+    try:
+        yield
+    finally:
+        asyncio.create_subprocess_exec = original
 
 
 def _parse_date(value: str | None) -> date | None:

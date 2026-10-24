@@ -6,7 +6,7 @@ from email.message import EmailMessage
 from email.utils import formataddr, make_msgid
 
 from .config import settings
-from .email_in import AUTH_HELP, REPLY_HEADER, EmailAuthError
+from .email_in import AUTH_HELP, NETWORK_TIMEOUT, REPLY_HEADER, EmailAuthError
 from .models import AgentResult, IncomingRequest
 
 log = logging.getLogger(__name__)
@@ -48,7 +48,7 @@ def build_reply(original: IncomingRequest, result: AgentResult) -> EmailMessage:
 
 
 def send(msg: EmailMessage) -> str:
-    with smtplib.SMTP_SSL(SMTP_HOST, 465) as smtp:
+    with smtplib.SMTP_SSL(SMTP_HOST, 465, timeout=NETWORK_TIMEOUT) as smtp:
         try:
             smtp.login(settings.gmail_address, settings.gmail_app_password)
         except (smtplib.SMTPAuthenticationError, smtplib.SMTPServerDisconnected):
