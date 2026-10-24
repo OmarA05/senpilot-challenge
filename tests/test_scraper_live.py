@@ -45,3 +45,14 @@ def test_download_ten_pdfs(scraper, tmp_path):
 def test_empty_tab(scraper, tmp_path):
     scraper.open_matter("M12205")
     assert scraper.download_documents(DocType.TRANSCRIPTS, limit=10, dest_dir=tmp_path) == []
+
+
+@pytest.mark.parametrize(
+    "doc_type, first_doc_no",
+    [(DocType.EXHIBITS, "H-1"), (DocType.KEY_DOCUMENTS, "97289")],  # title-first row layouts
+)
+def test_row_layouts(scraper, doc_type, first_doc_no):
+    scraper.open_matter("M12205")
+    docs = scraper.list_documents(doc_type, 2)
+    assert docs[0].doc_no == first_doc_no
+    assert all(d.title and d.date for d in docs)

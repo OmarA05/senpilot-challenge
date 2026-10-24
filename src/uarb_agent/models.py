@@ -12,6 +12,10 @@ class DocType(StrEnum):
     TRANSCRIPTS = "Transcripts"
     RECORDINGS = "Recordings"
 
+    @property
+    def slug(self) -> str:
+        return self.value.lower().replace(" ", "-")
+
 
 class IncomingRequest(BaseModel):
     sender: str
@@ -60,3 +64,4 @@ class MatterInfo(BaseModel):
 class AgentResult(BaseModel):
     reply_body: str
     zip_path: Path | None = None
+    subject_suffix: str | None = None  # e.g. "[M12205 – Other Documents]"; None for clarification replies

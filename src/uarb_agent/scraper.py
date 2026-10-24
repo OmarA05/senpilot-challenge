@@ -99,7 +99,13 @@ class UarbScraper:
         log.info("Opening matter %s", matter_number)
         page.goto(settings.uarb_url, timeout=60_000)
         placeholder = page.get_by_text("eg M01234", exact=True)
-        placeholder.wait_for(timeout=30_000)
+        comm_error = page.get_by_text("Communication problem")
+        placeholder.or_(comm_error).first.wait_for(timeout=30_000)
+        # After a long session WebDirect can show a "Communication problem" page; a reload recovers.
+        if comm_error.is_visible():
+            log.info("Site reported a communication problem, reloading")
+            page.reload(timeout=60_000)
+            placeholder.wait_for(timeout=30_000)
         box = placeholder.bounding_box()
         # The editable field is a div overlaid on the placeholder, so click by position.
         page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
@@ -223,7 +229,8 @@ class UarbScraper:
             self._current_tab = doc_type
         self._dismiss_alert()
         if count:
-            self.page.get_by_text(f"Found Count: {count}").wait_for(timeout=30_000)
+            # Not every tab shows "Found Count", so wait for the rows instead (after old ones clear).
+            self.page.wait_for_timeout(1000)
             self._go_get_it().first.wait_for(timeout=30_000)
             self._scroll_to_top()
         return count
@@ -234,13 +241,20 @@ class UarbScraper:
     def _rendered_rows(self) -> list[tuple[Document, Locator]]:
         rows = []
         for btn in self._go_get_it().all():
-            # Row text: doc_no, title, date, security, Preview, GO GET IT, extension
             lines = [l.strip() for l in btn.locator("xpath=ancestor::*[3]").inner_text().splitlines() if l.strip()]
-            if not lines:
+            fields = lines[: lines.index("Preview")] if "Preview" in lines else lines
+            if not fields:
                 continue
-            doc_date = next((l for l in lines if DATE_RE.match(l)), None)
-            title = lines[1] if len(lines) > 1 and lines[1] != doc_date else ""
-            rows.append((Document(doc_no=lines[0], title=title, date=doc_date), btn))
+            # Field order varies by tab:
+            #   Other Documents:         doc_no, title, date, security
+            #   Exhibits/Key Documents:  title, date, security, doc_no
+            date_idx = next((i for i, l in enumerate(fields) if DATE_RE.match(l)), None)
+            if date_idx == 1:
+                title, doc_no = fields[0], fields[3] if len(fields) > 3 else fields[0]
+            else:
+                doc_no, title = fields[0], fields[1] if len(fields) > 1 and fields[1] != fields[date_idx or 0] else ""
+            doc_date = fields[date_idx] if date_idx is not None else None
+            rows.append((Document(doc_no=doc_no, title=title, date=doc_date), btn))
         return rows
 
     def _scroll_list(self, to_top: bool = False) -> None:

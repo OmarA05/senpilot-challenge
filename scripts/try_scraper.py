@@ -25,7 +25,7 @@ def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s", datefmt="%H:%M:%S")
 
     doc_type = DocType(args.doc_type)
-    dest = settings.download_dir / args.matter / doc_type.value.lower().replace(" ", "-")
+    dest = settings.download_dir / args.matter / doc_type.slug
     start = time.monotonic()
 
     with UarbScraper(headless=not args.headed) as scraper:
