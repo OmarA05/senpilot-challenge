@@ -21,7 +21,7 @@ E, K, O, T, R = DocType.EXHIBITS, DocType.KEY_DOCUMENTS, DocType.OTHER_DOCUMENTS
     ],
 )
 def test_jobs(text, expected):
-    parsed = parse_request(text)
+    parsed = parse_request(text, use_llm=False)
     assert [(j.matter_number, j.doc_type) for j in parsed.jobs] == expected
     assert parsed.clarification is None
 
@@ -35,21 +35,21 @@ def test_jobs(text, expected):
     ],
 )
 def test_needs_clarification(text, hint):
-    parsed = parse_request(text)
+    parsed = parse_request(text, use_llm=False)
     assert parsed.jobs == []
     assert hint in parsed.clarification
 
 
 def test_ambiguous_pairing_falls_back_to_sentences():
     text = "Exhibits and Transcripts for M12205. Also M12383 and M12384 please."
-    parsed = parse_request(text)
+    parsed = parse_request(text, use_llm=False)
     assert [(j.matter_number, j.doc_type) for j in parsed.jobs] == [("M12205", E), ("M12205", T)]
     assert "M12383 and M12384" in parsed.clarification
 
 
 def test_caps_jobs_per_email():
     text = "Exhibits for " + ", ".join(f"M1220{i}" for i in range(7))
-    parsed = parse_request(text)
+    parsed = parse_request(text, use_llm=False)
     assert len(parsed.jobs) == 5
     assert "up to 5" in parsed.clarification
     assert "M12205" in parsed.clarification and "M12206" in parsed.clarification

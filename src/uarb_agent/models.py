@@ -34,6 +34,7 @@ class Job(BaseModel, frozen=True):
 class ParsedRequest(BaseModel):
     jobs: list[Job] = []
     clarification: str | None = None  # set when part or all of the email can't be fulfilled as-is
+    parsed_by: str | None = None  # "llm" or "regex"
 
     @property
     def is_valid(self) -> bool:

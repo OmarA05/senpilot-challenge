@@ -10,6 +10,8 @@ class Settings(BaseSettings):
     gmail_app_password: str = ""
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-5-5"
+    use_llm_parser: bool = True
+    llm_timeout_seconds: float = 30.0
 
     uarb_url: str = "https://uarb.novascotia.ca/fmi/webd/UARB15"
     poll_interval_seconds: int = 30
