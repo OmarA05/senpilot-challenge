@@ -2,7 +2,7 @@ import argparse
 import logging
 import zipfile
 
-from .agent import handle_request
+from .agent import handle_request, process_inbox_once
 
 
 def main() -> None:
@@ -12,6 +12,8 @@ def main() -> None:
     once = sub.add_parser("once", help="handle one request locally (no email) and print the replies")
     once.add_argument("text", help='request text, e.g. "Other Documents for M12205"')
     once.add_argument("--name", help="sender's name to greet (default: \"there\")")
+    check = sub.add_parser("check", help="process unread emails in the inbox once and reply")
+    check.add_argument("--subject-contains", help="only handle unread emails whose subject contains this text")
     sub.add_parser("run", help="poll the inbox and reply by email")
     args = parser.parse_args()
 
@@ -22,6 +24,9 @@ def main() -> None:
     )
     if args.command == "once":
         _print_results(args.text, args.name)
+    elif args.command == "check":
+        n = process_inbox_once(args.subject_contains)
+        print(f"Processed {n} email(s).")
     else:
         print("run: not implemented yet (Chunk 9)")
 

@@ -164,7 +164,23 @@ def check_reply(facts: ReplyFacts, text: str) -> list[str]:
         problems.append(f"unexpected matter number(s) {', '.join(sorted(stray))}")
     if "**" in text or re.search(r"^#", text, re.MULTILINE):
         problems.append("markdown formatting")
+    if not facts.attached and _claims_attachment(text):
+        problems.append("claims an attachment but none is attached")
     return problems
+
+
+ATTACH_CLAIM_RE = re.compile(r"\battach(?:ed|ing)\b|\bplease find\b|\benclosed\b|\bhere(?:'s| is) the zip\b", re.IGNORECASE)
+NEGATION_RE = re.compile(r"\b(?:not|no|nothing|none|never|without|couldn't|can't|wasn't|weren't|isn't|aren't)\b|n't\b", re.IGNORECASE)
+
+
+def _claims_attachment(text: str) -> bool:
+    """True if the text says something is attached, ignoring negated mentions like "nothing is attached"."""
+    for m in ATTACH_CLAIM_RE.finditer(text):
+        window = text[max(0, m.start() - 40):m.start()]
+        window = re.split(r"[.!?\n]", window)[-1]  # same sentence only
+        if not NEGATION_RE.search(window):
+            return True
+    return False
 
 
 def _has_number(text: str, n: int) -> bool:
@@ -190,6 +206,14 @@ def render_template(facts: ReplyFacts) -> str:
                 "Please try again in a little while."
             )
     return f"Hi {facts.sender_name or 'there'},\n\n{body}{SIGN_OFF}"
+
+
+def failure_text(sender_name: str | None = None) -> str:
+    """Last-resort reply when a whole email couldn't be handled (no facts to compose from)."""
+    return (
+        f"Hi {sender_name or 'there'},\n\nSomething went wrong while handling your request, so I couldn't complete it. "
+        f"Please try again in a little while.{SIGN_OFF}"
+    )
 
 
 def _success_body(f: ReplyFacts) -> str:

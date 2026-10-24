@@ -1,13 +1,14 @@
-"""Orchestration: request text in, one reply per job out. Never raises."""
+"""Orchestration: request text in, one reply per job out; and the inbox pass that emails them. Never raises."""
 
 import logging
+import re
 import shutil
 from pathlib import Path
 
-from . import composer
+from . import composer, email_in, email_out
 from .composer import ReplyFacts
 from .config import settings
-from .models import AgentResult, Document, Job, MatterInfo
+from .models import AgentResult, Document, IncomingRequest, Job, MatterInfo
 from .packager import make_zip
 from .parser import parse_request
 from .scraper import MatterNotFound, UarbScraper
@@ -75,3 +76,46 @@ def _result(facts: ReplyFacts, job: Job | None = None, zip_path: Path | None = N
         reply_body=body, zip_path=zip_path, composed_by=composed_by,
         subject_suffix=composer.subject_suffix(job) if job else None,
     )
+
+
+SUFFIX_RE = re.compile(r"\s*\[M\d{5} – [^\]]*\]")  # our own subject suffix, if they reply to a reply
+
+
+def request_text(req: IncomingRequest) -> str:
+    """What the parser sees: the subject (requests are often written there) plus the stripped body."""
+    subject = SUFFIX_RE.sub("", req.subject).strip()
+    return f"Subject: {subject}\n\n{req.body}" if subject else req.body
+
+
+def process_inbox_once(subject_contains: str | None = None) -> int:
+    """Handle every unread request: reply to each job, then mark the email processed. Returns emails handled."""
+    try:
+        requests = email_in.fetch_unread(subject_contains=subject_contains)
+    except Exception:
+        log.exception("Couldn't read the inbox")
+        return 0
+    for req in requests:
+        process_request(req)
+    return len(requests)
+
+
+def process_request(req: IncomingRequest) -> None:
+    log.info("Handling %r from %s", req.subject, req.sender_email)
+    try:
+        try:
+            results = handle_request(request_text(req), req.sender_name)
+        except Exception:
+            log.exception("Request %r failed", req.subject)
+            results = [AgentResult(reply_body=composer.failure_text(req.sender_name), composed_by="template")]
+        for result in results:
+            try:
+                email_out.send_reply(req, result)
+            except Exception:
+                log.exception("Couldn't send reply %s", result.subject_suffix or "[clarification]")
+    finally:
+        # Mark processed even after a failure: one missed reply beats replying in a loop.
+        if req.uid:
+            try:
+                email_in.mark_processed(req.uid)
+            except Exception:
+                log.exception("Couldn't mark %s processed", req.uid)

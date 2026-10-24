@@ -18,10 +18,13 @@ class DocType(StrEnum):
 
 
 class IncomingRequest(BaseModel):
-    sender: str
+    sender_email: str
+    sender_name: str | None = None
     subject: str
-    body: str
+    body: str  # plain text, quoted history stripped
     message_id: str | None = None
+    references: str | None = None  # original References header, for threading the reply
+    uid: str | None = None  # IMAP UID in INBOX
 
 
 class Job(BaseModel, frozen=True):

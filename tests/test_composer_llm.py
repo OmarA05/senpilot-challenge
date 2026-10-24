@@ -3,7 +3,7 @@ import httpx2
 
 from uarb_agent import composer
 
-from .composer_cases import clarification, skipped_for_size, success
+from .composer_cases import clarification, not_found, skipped_for_size, success, zero_docs
 from .fakes import FakeClient
 
 GOOD = (
@@ -67,3 +67,39 @@ def test_spelled_out_small_numbers_accepted():
     facts = success(tab_counts={"Exhibits": 1, "Key Documents": 0, "Other Documents": 2, "Transcripts": 0, "Recordings": 0}, total_in_tab=2, attempted=2, downloaded=2, attached=2)
     text = "Hi there,\n\nM12205 has one Exhibit and two Other Documents; I've attached both of the 2 Other Documents."
     assert composer.check_reply(facts, text) == []
+
+
+ZERO_BASE = (
+    "Hi there,\n\nM12205 is about the Windsor Street Exchange project. I found 13 Exhibits, 6 Key Documents, "
+    "43 Other Documents, and no Transcripts or Recordings. "
+)
+
+
+def test_attachment_claim_without_attachment_rejected():
+    for claim in [
+        "I've attached the Transcripts as a ZIP.",
+        "Please find the files below.",
+        "I am attaching them as a ZIP here.",
+        "The ZIP is enclosed.",
+    ]:
+        assert "claims an attachment but none is attached" in composer.check_reply(zero_docs(), ZERO_BASE + claim), claim
+
+
+def test_negated_attachment_mentions_allowed():
+    for ok in [
+        "Since there are no Transcripts for this matter, there's nothing to attach.",
+        "Nothing is attached because there are no Transcripts.",
+        "There are no Transcripts, so no files are attached.",
+        "I couldn't attach anything this time.",
+    ]:
+        assert composer.check_reply(zero_docs(), ZERO_BASE + ok) == [], ok
+    assert composer.check_reply(not_found(), "Hi there,\n\nI couldn't find M00000, so nothing is attached.") == []
+
+
+def test_attachment_claim_allowed_when_attached():
+    assert composer.check_reply(success(), GOOD) == []
+
+
+def test_false_attachment_claim_falls_back_to_template():
+    body, by = composer.compose(zero_docs(), use_llm=True, client=FakeClient(ZERO_BASE + "I've attached them as a ZIP."))
+    assert by == "template"
