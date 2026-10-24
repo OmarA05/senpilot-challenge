@@ -11,6 +11,7 @@ def main() -> None:
     sub = parser.add_subparsers(dest="command", required=True)
     once = sub.add_parser("once", help="handle one request locally (no email) and print the replies")
     once.add_argument("text", help='request text, e.g. "Other Documents for M12205"')
+    once.add_argument("--name", help="sender's name to greet (default: \"there\")")
     sub.add_parser("run", help="poll the inbox and reply by email")
     args = parser.parse_args()
 
@@ -20,15 +21,15 @@ def main() -> None:
         datefmt="%H:%M:%S",
     )
     if args.command == "once":
-        _print_results(args.text)
+        _print_results(args.text, args.name)
     else:
         print("run: not implemented yet (Chunk 9)")
 
 
-def _print_results(text: str) -> None:
-    results = handle_request(text)
+def _print_results(text: str, sender_name: str | None = None) -> None:
+    results = handle_request(text, sender_name)
     for i, r in enumerate(results, 1):
-        print(f"\n===== Reply {i}/{len(results)} {r.subject_suffix or '[clarification]'} =====")
+        print(f"\n===== Reply {i}/{len(results)} {r.subject_suffix or '[clarification]'} (written by {r.composed_by}) =====")
         print(r.reply_body)
         if r.zip_path:
             print(f"\nAttachment: {r.zip_path} ({r.zip_path.stat().st_size / 1024:.0f} KB)")

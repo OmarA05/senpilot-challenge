@@ -1,13 +1,11 @@
 """Turn a request email into jobs. Claude does the reading; regex validates its output and is the fallback."""
 
-import json
 import logging
 import re
-import time
-from functools import cache
 
 import anthropic
 
+from . import llm
 from .config import settings
 from .models import DocType, Job, ParsedRequest
 
@@ -59,55 +57,26 @@ OUTPUT_SCHEMA = {
 }
 
 
-class LlmParseError(ValueError):
-    pass
-
-
 def parse_request(text: str, use_llm: bool | None = None, client: anthropic.Anthropic | None = None) -> ParsedRequest:
     """Claude first (when enabled and a key or client is available), regex on any failure."""
     use_llm = settings.use_llm_parser if use_llm is None else use_llm
-    if use_llm and (client or settings.anthropic_api_key):
+    if use_llm and llm.available(client):
         try:
-            return _parse_with_llm(text, client or _client())
-        except (anthropic.APIError, LlmParseError) as e:
+            return _parse_with_llm(text, client)
+        except (anthropic.APIError, llm.LlmError) as e:
             log.warning("LLM parse failed (%s: %s); falling back to regex", type(e).__name__, e)
     return _parse_with_regex(text)
 
 
-@cache
-def _client() -> anthropic.Anthropic:
-    return anthropic.Anthropic(api_key=settings.anthropic_api_key, timeout=settings.llm_timeout_seconds, max_retries=1)
-
-
-def _parse_with_llm(text: str, client: anthropic.Anthropic) -> ParsedRequest:
-    start = time.monotonic()
-    response = client.messages.create(
-        model=settings.anthropic_model,
-        max_tokens=4096,
-        system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": f"<email>\n{text}\n</email>"}],
-        output_config={"effort": "low", "format": {"type": "json_schema", "schema": OUTPUT_SCHEMA}},
-    )
-    if response.stop_reason != "end_turn":
-        raise LlmParseError(f"stop_reason={response.stop_reason}")
-    raw = next((b.text for b in response.content if b.type == "text"), None)
-    if raw is None:
-        raise LlmParseError("no text block in response")
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as e:
-        raise LlmParseError(f"invalid JSON: {e}") from e
-    log.info(
-        "LLM parse took %.1fs (%d in / %d out tokens)",
-        time.monotonic() - start, response.usage.input_tokens, response.usage.output_tokens,
-    )
+def _parse_with_llm(text: str, client: anthropic.Anthropic | None) -> ParsedRequest:
+    data = llm.complete(SYSTEM_PROMPT, f"<email>\n{text}\n</email>", client, schema=OUTPUT_SCHEMA, label="Parse")
     return _validate_llm_output(text, data)
 
 
 def _validate_llm_output(text: str, data: object) -> ParsedRequest:
     """Keep only jobs whose matter number really appears in the email and whose type is a real tab."""
     if not isinstance(data, dict) or not isinstance(data.get("jobs"), list):
-        raise LlmParseError("unexpected output shape")
+        raise llm.LlmError("unexpected output shape")
     in_text = set(_find_matters(text))
     jobs: list[Job] = []
     invented: list[str] = []

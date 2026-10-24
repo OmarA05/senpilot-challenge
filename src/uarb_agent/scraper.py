@@ -203,7 +203,10 @@ class UarbScraper:
                 self._scroll_list()
         return list(docs.values())[:wanted]
 
-    def download_documents(self, doc_type: DocType, limit: int | None = None, dest_dir: Path | None = None) -> list[Document]:
+    def download_documents(
+        self, doc_type: DocType, limit: int | None = None, dest_dir: Path | None = None, failed: list[Document] | None = None
+    ) -> list[Document]:
+        """Returns the downloaded documents; ones that failed are appended to `failed` if given."""
         limit = settings.max_documents if limit is None else limit
         dest_dir = dest_dir or self.download_dir / (self.matter_number or "unknown")
         dest_dir.mkdir(parents=True, exist_ok=True)
@@ -218,6 +221,8 @@ class UarbScraper:
                 log.warning("Skipping %s: %s", doc.doc_no, e)
                 self._screenshot(f"download_{doc.doc_no}")
                 self._close_dialog()
+                if failed is not None:
+                    failed.append(doc)
         return downloaded
 
     def _open_tab(self, doc_type: DocType) -> int:

@@ -66,3 +66,4 @@ class AgentResult(BaseModel):
     reply_body: str
     zip_path: Path | None = None
     subject_suffix: str | None = None  # e.g. "[M12205 – Other Documents]"; None for clarification replies
+    composed_by: str | None = None  # "llm" or "template"
