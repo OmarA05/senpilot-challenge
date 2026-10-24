@@ -46,11 +46,13 @@ class Document(BaseModel):
 class MatterInfo(BaseModel):
     matter_number: str
     title: str
+    description: str | None = None
     status: str | None = None
     type: str | None = None
     category: str | None = None
     date_received: date | None = None
     date_final_submissions: date | None = None
+    date_final_label: str | None = None  # site shows "Decision Date" or "Date Final Submissions"
     outcome: str | None = None
     tab_counts: dict[DocType, int] = {}
 
