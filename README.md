@@ -117,6 +117,54 @@ docker run --rm --env-file .env uarb-agent once "Transcripts for M12205"
 
 The image is based on Microsoft's Playwright image, which includes Chromium. Secrets are passed at runtime and never built into the image. The agent only makes outbound connections (Gmail, the UARB site, Anthropic), so it can run on any host that supports a long-running container, with no public port.
 
+## Deployment
+
+The agent is one long-running container. It needs about **2 GB of RAM** for Chromium (or 1 GB plus swap), a few GB of disk, and outbound internet access. It needs no load balancer, domain or inbound ports. Services that require a web server, such as AWS App Runner, aren't a good fit.
+
+### AWS Lightsail (what this project runs on)
+
+1. **Create the instance.** Lightsail → **Create instance** → region *Canada (Montreal)* → *Linux/Unix* → *OS Only* → **Amazon Linux 2023** → choose the 2 GB plan (or 1 GB with swap). Optionally delete the HTTP (80) firewall rule under *Networking*, since only SSH is needed.
+2. **Open a terminal** with *Connect using SSH* in the console, then install the tools:
+   ```bash
+   sudo dnf install -y docker git 'dnf-command(config-manager)'
+   sudo dnf config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo
+   sudo dnf install -y gh
+   sudo systemctl enable --now docker
+   ```
+3. **Add swap.** This is a safety net for Chromium on small instances:
+   ```bash
+   sudo dd if=/dev/zero of=/swapfile bs=1M count=2048 && sudo chmod 600 /swapfile
+   sudo mkswap /swapfile && sudo swapon /swapfile
+   echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+   ```
+4. **Clone and build.** `gh auth login` uses the device-code flow; enter the code at github.com/login/device.
+   ```bash
+   gh auth login
+   gh repo clone OmarA05/senpilot-challenge uarb-agent && cd uarb-agent
+   sudo docker build -t uarb-agent .
+   ```
+5. **Add secrets.** Run `nano .env`, paste the three required values from `.env.example`, save, then `chmod 600 .env`. Use an editor rather than `echo`, so the secrets don't land in your shell history.
+6. **Run:**
+   ```bash
+   sudo docker run -d --name uarb-agent --restart unless-stopped --env-file .env uarb-agent
+   sudo docker logs -f uarb-agent      # wait for "Watching <address> every 30s"
+   ```
+   `--restart unless-stopped` brings the agent back after crashes and reboots. `docker stop` sends SIGTERM, which lets the current email finish before the agent exits.
+
+**Update to the latest commit:**
+```bash
+cd ~/uarb-agent && git pull && sudo docker build -t uarb-agent . \
+  && sudo docker rm -f uarb-agent \
+  && sudo docker run -d --name uarb-agent --restart unless-stopped --env-file .env uarb-agent
+```
+
+**Operating notes**
+- **Run only one agent per inbox.** Stop any local `run` while the server is live.
+- **The first login from a new server may trigger a Gmail security alert.** Confirm it from the agent's account.
+- **Every incoming email costs about 1¢ in Claude calls.** Set an AWS Budgets alert, and delete the instance when it's no longer needed. Lightsail bills stopped instances too, so stopping isn't enough.
+
+**Other hosts** work the same way, since the requirement is just "run this container". Options include an EC2 instance (e.g. t3.small) with the same steps, Railway or Render (deployed from the repo's Dockerfile, with no public port), Fly.io (remove the `[http_service]` section and run `fly scale memory 2048`), or ECS Fargate (one task, 1 vCPU / 2 GB, secrets in Secrets Manager; build with `--platform linux/amd64` on Apple Silicon).
+
 ## Tests
 
 ```bash
