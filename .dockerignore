@@ -1,0 +1,12 @@
+.env
+.venv/
+.git/
+downloads/
+tests/
+scripts/
+**/__pycache__/
+*.egg-info/
+.pytest_cache/
+*.pdf
+*.zip
+PLAN.md
