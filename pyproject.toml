@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "uarb-agent"
+version = "0.1.0"
+description = "Email agent that fetches UARB regulatory documents and replies with a ZIP"
+requires-python = ">=3.11"
+dependencies = [
+    "playwright>=1.45",
+    "anthropic>=0.40",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["live: hits the real UARB website (slow, network)"]
+addopts = "-m 'not live'"

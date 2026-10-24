@@ -1,0 +1,60 @@
+from datetime import date
+from enum import StrEnum
+from pathlib import Path
+
+from pydantic import BaseModel
+
+
+class DocType(StrEnum):
+    EXHIBITS = "Exhibits"
+    KEY_DOCUMENTS = "Key Documents"
+    OTHER_DOCUMENTS = "Other Documents"
+    TRANSCRIPTS = "Transcripts"
+    RECORDINGS = "Recordings"
+
+
+class IncomingRequest(BaseModel):
+    sender: str
+    subject: str
+    body: str
+    message_id: str | None = None
+
+
+class Job(BaseModel, frozen=True):
+    """One (matter, doc type) pair; each job gets its own scrape and reply."""
+
+    matter_number: str
+    doc_type: DocType
+
+
+class ParsedRequest(BaseModel):
+    jobs: list[Job] = []
+    clarification: str | None = None  # set when part or all of the email can't be fulfilled as-is
+
+    @property
+    def is_valid(self) -> bool:
+        return bool(self.jobs)
+
+
+class Document(BaseModel):
+    doc_no: str
+    title: str
+    date: str | None = None
+    path: Path | None = None  # set once downloaded
+
+
+class MatterInfo(BaseModel):
+    matter_number: str
+    title: str
+    status: str | None = None
+    type: str | None = None
+    category: str | None = None
+    date_received: date | None = None
+    date_final_submissions: date | None = None
+    outcome: str | None = None
+    tab_counts: dict[DocType, int] = {}
+
+
+class AgentResult(BaseModel):
+    reply_body: str
+    zip_path: Path | None = None
